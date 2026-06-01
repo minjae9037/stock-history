@@ -618,16 +618,25 @@ $('importFile').onchange=e=>{
 
 /* ============ Price Refresh (네이버 시세, codetabs CORS 프록시) ============ */
 const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+function parseWon(s){return +String(s).replace(/[^0-9.-]/g,'');}
+function fmtKst(iso){ // "2026-06-01T20:00:00+09:00" -> "06/01 20:00" (TZ 영향 없이 문자열 파싱)
+  return iso ? iso.slice(5,7)+'/'+iso.slice(8,10)+' '+iso.slice(11,16) : '';
+}
 async function fetchPrice(code){
-  const url='https://m.stock.naver.com/api/stock/'+code+'/integration';
+  const url='https://m.stock.naver.com/api/stock/'+code+'/basic';
   const res=await fetch(PROXY+encodeURIComponent(url));
   if(!res.ok) throw new Error('http '+res.status);
   const j=await res.json();
-  const d=j.dealTrendInfos&&j.dealTrendInfos[0];
-  if(!d||!d.closePrice) throw new Error('no price');
-  const price=+String(d.closePrice).replace(/,/g,'');
-  const asOf=d.bizdate?`${d.bizdate.slice(4,6)}/${d.bizdate.slice(6,8)}`:'';
-  return {price,asOf,name:j.stockName||''};
+  if(!j.closePrice) throw new Error('no price');
+  // 정규장 마감 후 시간외 단일가 체결이 있으면 그 값이 최신 현재가 — 사용자가 보는 값과 일치
+  const over=j.overMarketPriceInfo;
+  let price, traded, kind='';
+  if(over && over.overPrice && parseWon(over.overPrice)>0){
+    price=parseWon(over.overPrice); traded=over.localTradedAt; kind='시간외 ';
+  }else{
+    price=parseWon(j.closePrice); traded=j.localTradedAt;
+  }
+  return {price,asOf:kind+fmtKst(traded),name:j.stockName||''};
 }
 $('refreshBtn').onclick=async()=>{
   const targets=DATA.filter(t=>t.status==='hold'&&t.code&&/^\d{6}$/.test(t.code));
