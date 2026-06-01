@@ -129,6 +129,15 @@
   .seg input{display:none}
   .seg .opt{border:1px solid var(--border);border-radius:11px;padding:11px;text-align:center;font-weight:700;font-size:13.5px;color:var(--muted);transition:.15s}
   .seg input:checked + .opt{border-color:var(--accent);color:var(--text);background:var(--panel2)}
+  .aclist{position:absolute;left:0;right:0;top:100%;z-index:30;background:var(--panel);border:1px solid var(--border);border-radius:11px;margin-top:5px;box-shadow:var(--shadow);max-height:262px;overflow-y:auto;display:none}
+  .aclist.on{display:block}
+  .acitem{padding:9px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13.5px;border-bottom:1px solid var(--border)}
+  .acitem:last-child{border-bottom:none}
+  .acitem:hover,.acitem.sel{background:var(--panel2)}
+  .acitem .acname{font-weight:600}
+  .acitem .acname b{color:var(--accent)}
+  .acitem .acmkt{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--panel2);color:var(--muted);border:1px solid var(--border);margin-left:auto}
+  .acitem .accode{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;min-width:48px;text-align:right}
   .selldwrap{overflow:hidden;transition:.25s;max-height:0;opacity:.5}
   .selldwrap.on{max-height:340px;opacity:1}
   .hint{font-size:11.5px;color:var(--muted);margin-top:5px}
@@ -263,9 +272,10 @@
         </div>
 
         <div class="grid2">
-          <div class="field">
+          <div class="field" style="position:relative">
             <label>종목명 <span class="req">*</span></label>
-            <input type="text" id="f_name" placeholder="예: 삼성전자" required>
+            <input type="text" id="f_name" placeholder="예: 삼성전자 (이름 입력 → 코드 자동)" required autocomplete="off">
+            <div class="aclist" id="acList"></div>
           </div>
           <div class="field">
             <label>종목코드 <span style="font-weight:400">(선택)</span></label>
@@ -399,6 +409,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="stocks.js"></script>
 <script>
 /* ============ Storage ============ */
 const KEY='stockHistory.v1';
@@ -581,13 +592,53 @@ function render(){ renderKPI(); renderCharts(); renderTable(); }
 /* ============ Modal ============ */
 const $=id=>document.getElementById(id);
 const overlay=$('overlay');
+
+/* ===== 종목명 자동완성 (STOCKS = 시총 내림차순) ===== */
+const acList=$('acList'); let acItems=[], acSel=-1;
+const STK=(typeof STOCKS!=='undefined')?STOCKS:[];
+const norm=s=>(s||'').toLowerCase().replace(/\s/g,'');
+function searchStocks(q){
+  q=norm(q); if(!q) return [];
+  const out=[];
+  for(let i=0;i<STK.length && out.length<8;i++){ if(norm(STK[i][0]).includes(q)) out.push(STK[i]); }
+  return out; // 이미 시총 내림차순 → 부분일치 결과도 시총순 유지
+}
+function hideAc(){ acItems=[]; acSel=-1; acList.classList.remove('on'); acList.innerHTML=''; }
+function renderAc(){
+  if(!acItems.length){ acList.classList.remove('on'); acList.innerHTML=''; return; }
+  const q=norm($('f_name').value);
+  acList.innerHTML=acItems.map((s,i)=>{
+    const idx=norm(s[0]).indexOf(q);
+    let nm=esc(s[0]);
+    if(idx>=0&&q){ const a=s[0].slice(0,idx),b=s[0].slice(idx,idx+q.length),c=s[0].slice(idx+q.length);
+      nm=`${esc(a)}<b>${esc(b)}</b>${esc(c)}`; }
+    return `<div class="acitem${i===acSel?' sel':''}" data-i="${i}"><span class="acname">${nm}</span><span class="acmkt">${s[2]}</span><span class="accode">${s[1]}</span></div>`;
+  }).join('');
+  acList.classList.add('on');
+}
+function pickAc(i){ const s=acItems[i]; if(!s)return; $('f_name').value=s[0]; $('f_code').value=s[1]; hideAc(); $('f_code').focus(); }
+$('f_name').addEventListener('input',()=>{ acSel=-1; acItems=searchStocks($('f_name').value); renderAc(); });
+$('f_name').addEventListener('keydown',e=>{
+  if(!acList.classList.contains('on'))return;
+  if(e.key==='ArrowDown'){e.preventDefault();acSel=Math.min(acSel+1,acItems.length-1);renderAc();
+    const el=acList.querySelector('.acitem.sel'); if(el)el.scrollIntoView({block:'nearest'});}
+  else if(e.key==='ArrowUp'){e.preventDefault();acSel=Math.max(acSel-1,0);renderAc();
+    const el=acList.querySelector('.acitem.sel'); if(el)el.scrollIntoView({block:'nearest'});}
+  else if(e.key==='Enter'){ if(acSel>=0){e.preventDefault();pickAc(acSel);} }
+  else if(e.key==='Escape'){hideAc();}
+});
+acList.addEventListener('mousedown',e=>{ const it=e.target.closest('.acitem'); if(it){e.preventDefault();pickAc(+it.dataset.i);} });
+$('f_name').addEventListener('blur',()=>{
+  setTimeout(hideAc,150);
+  if(!$('f_code').value.trim()){ const n=norm($('f_name').value); const hit=STK.find(s=>norm(s[0])===n); if(hit)$('f_code').value=hit[1]; }
+});
 function openAdd(){
   editId=null; $('mTitle').textContent='＋ 기록 추가'; $('form').reset();
   document.querySelector('input[name=rtype][value=trade]').checked=true;
   document.querySelector('input[name=status][value=hold]').checked=true;
   const today=new Date().toISOString().slice(0,10);
   $('f_buyDate').value=today; $('f_divDate').value=today;
-  syncType(); updateCalc(); overlay.classList.add('on'); $('f_name').focus();
+  hideAc(); syncType(); updateCalc(); overlay.classList.add('on'); $('f_name').focus();
 }
 function openEdit(id){
   const t=DATA.find(x=>x.id===id); if(!t)return;
@@ -606,7 +657,7 @@ function openEdit(id){
     $('f_sellDate').value=t.sellDate||''; $('f_sellPrice').value=t.sellPrice??'';
     $('f_fee').value=t.fee??'';
   }
-  syncType(); updateCalc(); overlay.classList.add('on');
+  hideAc(); syncType(); updateCalc(); overlay.classList.add('on');
 }
 function closeModal(){ overlay.classList.remove('on'); }
 function curType(){ return document.querySelector('input[name=rtype]:checked').value; }
