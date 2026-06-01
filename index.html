@@ -203,9 +203,11 @@
       <button class="tab" data-f="sold">매도완료</button>
     </div>
     <div class="search"><input id="q" type="text" placeholder="종목명·코드 검색"></div>
-    <button class="btn" id="exportBtn">⬇ 내보내기</button>
-    <button class="btn" id="importBtn">⬆ 가져오기</button>
+    <button class="btn" id="refreshBtn" title="보유 종목 현재가를 네이버 시세로 갱신">💹 가격 갱신</button>
+    <button class="btn" id="exportBtn">↑ 내보내기</button>
+    <button class="btn" id="importBtn">↓ 가져오기</button>
     <input type="file" id="importFile" accept=".json" style="display:none">
+    <button class="btn" id="syncBtn" title="GitHub 저장소에 백업·동기화">☁️ 동기화</button>
     <button class="btn primary" id="addBtn">＋ 거래 추가</button>
   </div>
 
@@ -320,6 +322,45 @@
         <button type="submit" class="btn primary" id="mSave">저장</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ===== Sync Modal ===== -->
+<div class="overlay" id="syncOverlay">
+  <div class="modal">
+    <div class="mh">
+      <h2>☁️ GitHub 동기화</h2>
+      <button class="x" id="syncClose">×</button>
+    </div>
+    <div class="mbody">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+        내 거래 기록을 GitHub 저장소의 <b>JSON 파일</b>로 올려, 다른 기기·브라우저에서도 같은 데이터를 쓸 수 있어요.
+        설정은 이 브라우저에만 저장됩니다.
+      </p>
+      <div class="field full">
+        <label>GitHub 토큰 (PAT) <span class="req">*</span></label>
+        <input type="password" id="s_token" placeholder="ghp_... 또는 github_pat_...">
+        <div class="hint">github.com → Settings → Developer settings → <b>Personal access tokens</b>.
+          Fine-grained 토큰 권장 — 대상 저장소에 <b>Contents: Read &amp; write</b> 권한. 토큰은 이 기기에만 저장되며 어디에도 전송되지 않아요(GitHub 직접 호출).</div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label>저장소 (owner/repo) <span class="req">*</span></label>
+          <input type="text" id="s_repo" placeholder="minjae9037/stock-history-data">
+        </div>
+        <div class="field">
+          <label>파일 경로</label>
+          <input type="text" id="s_path" placeholder="holdings.json">
+        </div>
+      </div>
+      <div class="hint" style="margin-top:-4px">⚠️ 공개 저장소에 올리면 누구나 볼 수 있어요. <b>비공개(private) 저장소</b>를 권장합니다 — 없으면 아래 버튼으로 만들 수 있어요.</div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn" id="s_create">🆕 비공개 저장소 만들기</button>
+        <button class="btn" id="s_pull">↓ 깃허브에서 불러오기</button>
+        <button class="btn primary" id="s_push">↑ 깃허브에 올리기</button>
+      </div>
+      <div class="calc on" id="s_status" style="margin-top:16px;display:none"></div>
+    </div>
   </div>
 </div>
 
@@ -453,7 +494,7 @@ function renderTable(){
       sellCol=`${t.sellDate||'-'}<div class="code">@${won(t.sellPrice)}</div>`;
     }else{
       statusBadge=`<span class="badge hold">📦 보유중</span>`;
-      sellCol=c.evaluable?`<span class="code">현재 ${won(c.refPrice)}</span>`:`<span class="code">현재가 미입력</span>`;
+      sellCol=c.evaluable?`<span class="code">현재 ${won(c.refPrice)}${t.curAsOf?` · ${t.curAsOf}`:''}</span>`:`<span class="code">현재가 미입력</span>`;
     }
     if(c.evaluable){ plCell=`<span class="${clsOf(c.pl)}">${won(c.pl)}</span>`; pctCell=`<span class="${clsOf(c.pl)}">${pct(c.plPct)}</span>`; }
     else { plCell='<span style="color:var(--muted)">—</span>'; pctCell='<span style="color:var(--muted)">—</span>'; }
@@ -575,6 +616,105 @@ $('importFile').onchange=e=>{
   r.readAsText(f);
 };
 
+/* ============ Price Refresh (네이버 시세, codetabs CORS 프록시) ============ */
+const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+async function fetchPrice(code){
+  const url='https://m.stock.naver.com/api/stock/'+code+'/integration';
+  const res=await fetch(PROXY+encodeURIComponent(url));
+  if(!res.ok) throw new Error('http '+res.status);
+  const j=await res.json();
+  const d=j.dealTrendInfos&&j.dealTrendInfos[0];
+  if(!d||!d.closePrice) throw new Error('no price');
+  const price=+String(d.closePrice).replace(/,/g,'');
+  const asOf=d.bizdate?`${d.bizdate.slice(4,6)}/${d.bizdate.slice(6,8)}`:'';
+  return {price,asOf,name:j.stockName||''};
+}
+$('refreshBtn').onclick=async()=>{
+  const targets=DATA.filter(t=>t.status==='hold'&&t.code&&/^\d{6}$/.test(t.code));
+  if(!targets.length){toast('현재가를 갱신할 보유 종목(6자리 코드)이 없어요');return;}
+  const btn=$('refreshBtn'); const orig=btn.textContent;
+  btn.textContent='⏳ 갱신 중…'; btn.disabled=true;
+  let ok=0, fail=0;
+  for(const t of targets){
+    try{ const r=await fetchPrice(t.code); t.curPrice=r.price; t.curAsOf=r.asOf; ok++; }
+    catch(e){ fail++; }
+  }
+  btn.textContent=orig; btn.disabled=false;
+  save();
+  toast(`시세 갱신 완료 · 성공 ${ok}${fail?` · 실패 ${fail}`:''}`);
+};
+
+/* ============ GitHub Sync (Contents API) ============ */
+const ghCfg={get token(){return localStorage.getItem('sh.gh.token')||''},
+  get repo(){return localStorage.getItem('sh.gh.repo')||'minjae9037/stock-history-data'},
+  get path(){return localStorage.getItem('sh.gh.path')||'holdings.json'}};
+function sStatus(msg,type){const el=$('s_status');el.style.display='block';
+  const c=type==='err'?'var(--red)':type==='ok'?'var(--green)':'var(--text)';
+  el.innerHTML=`<div class="row" style="color:${c}">${msg}</div>`;}
+function ghHeaders(){return{'Authorization':'Bearer '+$('s_token').value.trim(),
+  'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};}
+function saveCfg(){localStorage.setItem('sh.gh.token',$('s_token').value.trim());
+  localStorage.setItem('sh.gh.repo',$('s_repo').value.trim());
+  localStorage.setItem('sh.gh.path',$('s_path').value.trim()||'holdings.json');}
+function b64enc(str){return btoa(unescape(encodeURIComponent(str)));}
+function b64dec(str){return decodeURIComponent(escape(atob(str)));}
+function openSync(){
+  $('s_token').value=ghCfg.token; $('s_repo').value=ghCfg.repo; $('s_path').value=ghCfg.path;
+  $('s_status').style.display='none'; $('syncOverlay').classList.add('on');
+}
+function closeSync(){$('syncOverlay').classList.remove('on');}
+$('s_create').onclick=async()=>{
+  saveCfg(); const repo=$('s_repo').value.trim(); const name=repo.split('/')[1];
+  if(!$('s_token').value.trim()||!name){sStatus('토큰과 저장소(owner/repo)를 입력하세요','err');return;}
+  sStatus('저장소 생성 중…');
+  try{
+    const r=await fetch('https://api.github.com/user/repos',{method:'POST',headers:ghHeaders(),
+      body:JSON.stringify({name,private:true,description:'주식 투자 이력 동기화 데이터',auto_init:true})});
+    if(r.status===201) sStatus('✅ 비공개 저장소 생성 완료. 이제 "올리기"를 누르세요','ok');
+    else if(r.status===422) sStatus('이미 존재하는 저장소예요. 바로 올리기/불러오기 하세요','ok');
+    else {const e=await r.json(); sStatus('생성 실패: '+(e.message||r.status)+' (Fine-grained 토큰은 미리 저장소를 만들어야 할 수 있어요)','err');}
+  }catch(e){sStatus('네트워크 오류: '+e.message,'err');}
+};
+$('s_push').onclick=async()=>{
+  saveCfg();
+  if(!$('s_token').value.trim()||!$('s_repo').value.trim()){sStatus('토큰과 저장소를 입력하세요','err');return;}
+  sStatus('올리는 중…');
+  const api=`https://api.github.com/repos/${ghCfg.repo}/contents/${ghCfg.path}`;
+  try{
+    let sha=null;
+    const cur=await fetch(api,{headers:ghHeaders()});
+    if(cur.ok){const j=await cur.json(); sha=j.sha;}
+    const payload={data:DATA,savedAt:new Date().toISOString()};
+    const body={message:'update holdings ('+DATA.length+')',content:b64enc(JSON.stringify(payload,null,2))};
+    if(sha)body.sha=sha;
+    const r=await fetch(api,{method:'PUT',headers:ghHeaders(),body:JSON.stringify(body)});
+    if(r.ok){localStorage.setItem('sh.gh.synced',new Date().toISOString());
+      sStatus(`✅ 올리기 완료 (${DATA.length}건)`,'ok'); toast('깃허브에 동기화했어요 ☁️↑');}
+    else{const e=await r.json(); sStatus('실패: '+(e.message||r.status),'err');}
+  }catch(e){sStatus('네트워크 오류: '+e.message,'err');}
+};
+$('s_pull').onclick=async()=>{
+  saveCfg();
+  if(!$('s_token').value.trim()||!$('s_repo').value.trim()){sStatus('토큰과 저장소를 입력하세요','err');return;}
+  sStatus('불러오는 중…');
+  const api=`https://api.github.com/repos/${ghCfg.repo}/contents/${ghCfg.path}`;
+  try{
+    const r=await fetch(api,{headers:ghHeaders()});
+    if(r.status===404){sStatus('파일이 아직 없어요. 먼저 "올리기"로 백업하세요','err');return;}
+    if(!r.ok){const e=await r.json(); sStatus('실패: '+(e.message||r.status),'err');return;}
+    const j=await r.json();
+    const obj=JSON.parse(b64dec(j.content.replace(/\n/g,'')));
+    const arr=Array.isArray(obj)?obj:obj.data;
+    if(!Array.isArray(arr))throw new Error('형식 오류');
+    if(DATA.length && !confirm(`현재 ${DATA.length}건을 깃허브의 ${arr.length}건으로 교체할까요?`)){sStatus('취소됨');return;}
+    DATA=arr; save();
+    sStatus(`✅ 불러오기 완료 (${arr.length}건)`,'ok'); toast('깃허브에서 불러왔어요 ☁️↓');
+  }catch(e){sStatus('오류: '+e.message,'err');}
+};
+$('syncBtn').onclick=openSync;
+$('syncClose').onclick=closeSync;
+$('syncOverlay').onclick=e=>{if(e.target===$('syncOverlay'))closeSync();};
+
 /* ============ Events ============ */
 $('addBtn').onclick=openAdd;
 $('mClose').onclick=$('mCancel').onclick=closeModal;
@@ -591,7 +731,7 @@ document.querySelectorAll('#tbl th[data-s]').forEach(th=>th.onclick=()=>{
   if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}
   renderTable();
 });
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeSync();}});
 
 /* ============ Theme ============ */
 const themeBtn=$('themeBtn');
@@ -602,7 +742,7 @@ function applyTheme(t){
   if(chStock)renderCharts();
 }
 themeBtn.onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light');
-applyTheme(localStorage.getItem('sh.theme')||'dark');
+applyTheme(localStorage.getItem('sh.theme')||'light');
 
 /* ============ Toast ============ */
 let toastT;
