@@ -801,20 +801,24 @@ async function fetchPrice(code){
   }
   return {price,asOf:kind+fmtKst(traded),name:j.stockName||''};
 }
-$('refreshBtn').onclick=async()=>{
+let refreshing=false;
+async function refreshPrices(silent){
+  if(refreshing)return;
   const targets=DATA.filter(t=>t.status==='hold'&&t.code&&/^\d{6}$/.test(t.code));
-  if(!targets.length){toast('현재가를 갱신할 보유 종목(6자리 코드)이 없어요');return;}
-  const btn=$('refreshBtn'); const orig=btn.textContent;
+  if(!targets.length){ if(!silent)toast('현재가를 갱신할 보유 종목(6자리 코드)이 없어요'); return; }
+  refreshing=true;
+  const btn=$('refreshBtn');
   btn.textContent='⏳ 갱신 중…'; btn.disabled=true;
   let ok=0, fail=0;
   for(const t of targets){
     try{ const r=await fetchPrice(t.code); t.curPrice=r.price; t.curAsOf=r.asOf; ok++; }
     catch(e){ fail++; }
   }
-  btn.textContent=orig; btn.disabled=false;
-  save();
-  toast(`시세 갱신 완료 · 성공 ${ok}${fail?` · 실패 ${fail}`:''}`);
-};
+  btn.textContent='💹 가격 갱신'; btn.disabled=false; refreshing=false;
+  if(ok)save(); else render();
+  if(!silent || ok) toast(`시세 갱신 완료 · 성공 ${ok}${fail?` · 실패 ${fail}`:''}`);
+}
+$('refreshBtn').onclick=()=>refreshPrices(false);
 
 /* ============ GitHub Sync (Contents API) ============ */
 const ghCfg={get token(){return localStorage.getItem('sh.gh.token')||''},
@@ -933,6 +937,9 @@ if(!localStorage.getItem(KEY) && !localStorage.getItem('sh.seeded')){
   save();
 }
 render();
+
+/* ============ 페이지 로드 시 자동 시세 갱신 (버튼 없이) ============ */
+refreshPrices(true);
 </script>
 </body>
 </html>
