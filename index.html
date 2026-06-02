@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stock History · 나의 주식 투자 이력</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
   :root{
     --bg:#0e1117; --panel:#161b22; --panel2:#1c232d; --border:#2a3340;
@@ -470,6 +471,8 @@ function renderKPI(){
 
 /* ============ Charts ============ */
 let chStock,chHold,chMonth;
+if(window.ChartDataLabels){ Chart.register(window.ChartDataLabels); }
+const lblShort=n=>{const a=Math.abs(n);return (n<0?'-':'+')+(a>=10000?Math.round(a/10000).toLocaleString()+'만':Math.round(a).toLocaleString());};
 function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim()}
 function renderCharts(){
   const grid=css('--border'), txt=css('--muted'), green=css('--green'), red=css('--red'), accent=css('--accent');
@@ -484,7 +487,11 @@ function renderCharts(){
   chStock=new Chart(document.getElementById('chStock'),{type:'bar',
     data:{labels:sNames,datasets:[{data:sNames.map(n=>Math.round(byStock[n])),
       backgroundColor:sNames.map(n=>byStock[n]>=0?green:red),borderRadius:6,maxBarThickness:46}]},
-    options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>won(c.raw)}}},
+    options:{layout:{padding:{top:22,bottom:6}},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>won(c.raw)}},
+      datalabels:{anchor:'end',align:'end',clamp:true,offset:2,
+        color:c=>c.dataset.data[c.dataIndex]>=0?green:red,
+        font:{size:11,weight:'700'},formatter:v=>lblShort(v)}},
       scales:{x:{grid:{display:false}},y:{grid:{color:grid},ticks:{callback:v=>(v/10000).toLocaleString()+'만'}}}}});
 
   // 보유 비중
@@ -494,8 +501,14 @@ function renderCharts(){
   chHold=new Chart(document.getElementById('chHold'),{type:'doughnut',
     data:{labels:hNames.length?hNames:['보유 없음'],datasets:[{data:hVals.length?hVals:[1],
       backgroundColor:hVals.length?hNames.map((_,i)=>palette[i%palette.length]):[grid],borderWidth:2,borderColor:css('--panel')}]},
-    options:{cutout:'62%',plugins:{legend:{position:'right',labels:{boxWidth:12,padding:10,font:{size:11.5}}},
-      tooltip:{callbacks:{label:c=>` ${c.label}: ${won(c.raw)}`}}}}});
+    options:{cutout:'58%',plugins:{legend:{position:'right',labels:{boxWidth:12,padding:10,font:{size:11.5}}},
+      tooltip:{callbacks:{label:c=>` ${c.label}: ${won(c.raw)}`}},
+      datalabels:{color:'#fff',font:{size:11,weight:'700'},textShadowColor:'rgba(0,0,0,.45)',textShadowBlur:4,
+        formatter:(v,ctx)=>{ if(!hVals.length)return '';
+          const tot=ctx.dataset.data.reduce((a,b)=>a+b,0); const p=tot?v/tot*100:0;
+          if(p<7)return ''; const nm=ctx.chart.data.labels[ctx.dataIndex];
+          return (nm.length>6?nm.slice(0,6)+'…':nm)+'\n'+Math.round(p)+'%'; },
+        textAlign:'center'}}}});
 
   // 월별 실현손익 + 배당
   const byMonth={};
@@ -508,7 +521,7 @@ function renderCharts(){
   chMonth=new Chart(document.getElementById('chMonth'),{type:'bar',
     data:{labels:mKeys,datasets:[{data:mKeys.map(m=>Math.round(byMonth[m])),
       backgroundColor:mKeys.map(m=>byMonth[m]>=0?green:red),borderRadius:6,maxBarThickness:40}]},
-    options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>won(c.raw)}}},
+    options:{plugins:{legend:{display:false},datalabels:{display:false},tooltip:{callbacks:{label:c=>won(c.raw)}}},
       scales:{x:{grid:{display:false}},y:{grid:{color:grid},ticks:{callback:v=>(v/10000).toLocaleString()+'만'}}}}});
 }
 
