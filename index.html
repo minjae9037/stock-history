@@ -812,8 +812,8 @@ $('importFile').onchange=e=>{
   r.readAsText(f);
 };
 
-/* ============ Price Refresh (네이버 시세, codetabs CORS 프록시) ============ */
-const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+/* ============ Price Refresh (네이버 시세, 자체 Cloudflare Worker 프록시) ============ */
+const PROXY='https://naver-stock-proxy.minjae9037.workers.dev/proxy?url=';
 function parseWon(s){return +String(s).replace(/[^0-9.-]/g,'');}
 function fmtKst(iso){ // "2026-06-01T20:00:00+09:00" -> "06/01 20:00" (TZ 영향 없이 문자열 파싱)
   return iso ? iso.slice(5,7)+'/'+iso.slice(8,10)+' '+iso.slice(11,16) : '';
